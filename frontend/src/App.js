@@ -6,6 +6,9 @@ import CircuitVisualizer from './components/CircuitVisualizer';
 import { Truck, Zap, BarChart3, Cpu } from 'lucide-react';
 import Loader from './Loader';
 
+// !!! IMPORTANT: Replace this with your actual OpenWeatherMap API key
+const OPENWEATHER_API_KEY = "b6dceb2fae1af50e30bdabb3b6788fdd";
+
 function App() {
     const [optimizationResults, setOptimizationResults] = useState(null);
     const [isOptimizing, setIsOptimizing] = useState(false);
@@ -15,6 +18,7 @@ function App() {
     const [showMetrics, setShowMetrics] = useState(false);
     const [showCircuit, setShowCircuit] = useState(false);
     const [websocket, setWebsocket] = useState(null);
+    const [selectedRouteIndex, setSelectedRouteIndex] = useState(null);
 
     useEffect(() => {
         // Initialize WebSocket connection
@@ -53,6 +57,7 @@ function App() {
         setProgressMessage(message);
         setOptimizationMethod(method);
         setOptimizationResults(null);
+        setSelectedRouteIndex(null);
     };
     
     const handleOptimizationComplete = (results, method) => {
@@ -61,6 +66,9 @@ function App() {
         setProgressMessage("Optimization complete!");
         setOptimizationResults(results);
         setOptimizationMethod(method);
+        if (results && results.routes && results.routes.length > 0) {
+            setSelectedRouteIndex(0); // Select the first route by default
+        }
     };
 
     const toggleMetrics = () => setShowMetrics(!showMetrics);
@@ -113,6 +121,8 @@ function App() {
                     <MapComponent
                         optimizationResults={optimizationResults}
                         isOptimizing={isOptimizing}
+                        openWeatherApiKey={OPENWEATHER_API_KEY}
+                        selectedRouteIndex={selectedRouteIndex}
                     />
                 </div>
             </div>
@@ -123,6 +133,8 @@ function App() {
                     <MetricsPanel
                         results={optimizationResults}
                         method={optimizationMethod}
+                        onRouteSelect={setSelectedRouteIndex}
+                        selectedRouteIndex={selectedRouteIndex}
                     />
                 </div>
             )}

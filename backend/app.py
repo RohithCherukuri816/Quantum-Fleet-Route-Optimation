@@ -49,9 +49,11 @@ def calculate_distance(p1, p2):
     """Calculates Euclidean distance between two points."""
     return math.sqrt((p1['lat'] - p2['lat'])**2 + (p1['lon'] - p2['lon'])**2)
 
-def get_realtime_traffic_data(p1, p2):
-    """Simulates real-time traffic data."""
-    traffic_multiplier = 1 + (random.random() * 0.2)
+def get_realtime_data(p1, p2):
+    """Simulates fetching real-time traffic, weather, etc., to influence route cost."""
+    # In a real application, you would call an external API here.
+    # For this demo, we use a random multiplier to simulate.
+    traffic_multiplier = 1 + (random.random() * 0.5)  # 1.0 to 1.5x slower
     return calculate_distance(p1, p2) * traffic_multiplier
 
 def get_osrm_route(points):
@@ -92,14 +94,15 @@ def find_optimized_route_classical(depot, destinations, vehicle_count):
     unassigned_destinations = list(destinations)
     
     while unassigned_destinations:
-        min_dist = float('inf')
+        min_cost = float('inf')
         best_vehicle_index, best_dest_index = -1, -1
         
         for i, vehicle_loc in enumerate(current_locations):
             for j, dest in enumerate(unassigned_destinations):
-                dist = calculate_distance(vehicle_loc, dest)
-                if dist < min_dist:
-                    min_dist = dist
+                # Use real-time data to calculate cost, not just raw distance
+                cost = get_realtime_data(vehicle_loc, dest)
+                if cost < min_cost:
+                    min_cost = cost
                     best_vehicle_index, best_dest_index = i, j
         
         if best_dest_index == -1:
@@ -123,8 +126,9 @@ def formulate_qubo_for_vrp(depot, destinations, vehicle_count):
     for i in range(num_nodes):
         for j in range(num_nodes):
             if i != j:
-                distance = calculate_distance(all_points[i], all_points[j])
-                obj_expr += distance * x[i, j]
+                # Use real-time data to influence the objective function
+                cost = get_realtime_data(all_points[i], all_points[j])
+                obj_expr += cost * x[i, j]
                 
     mdl.minimize(obj_expr)
     qp = from_docplex_mp(mdl)
@@ -189,32 +193,46 @@ def optimize_route():
         destinations.append(coords)
     
     # 2. Solve VRP to get a list of points for each vehicle
-    # The existing code does not have a real VRP solver, so this is a placeholder.
-    # For a simple demo, we will treat all points as a single route.
-    all_points = [depot] + destinations
+    if method == 'classical':
+        solved_routes = find_optimized_route_classical(depot, destinations, vehicle_count)
+    elif method == 'quantum':
+        solved_routes = get_quantum_route(depot, destinations, vehicle_count)
+    else:
+        return jsonify({"ok": False, "error": "Invalid optimization method"}), 400
 
-    # 3. Get the route path from OSRM
-    osrm_data = get_osrm_route(all_points)
+    # 3. Get the route path from OSRM for each solved route
+    final_routes = []
+    total_distance_km = 0
+    total_duration_hours = 0
     
-    if not osrm_data:
-        return jsonify({"ok": False, "error": "Could not get route from OSRM"}), 500
-
-    # Convert OSRM's [lon, lat] geometry into the frontend's expected {lat, lon} format
-    route_path = [{"lat": coord[1], "lon": coord[0]} for coord in osrm_data['geometry']]
-    
-    # 4. Create the final results payload
-    final_results = {
-        "routes": [{
+    for route_points in solved_routes:
+        if len(route_points) < 2:
+            continue
+            
+        osrm_data = get_osrm_route(route_points)
+        if not osrm_data:
+            continue
+            
+        route_path = [{"lat": coord[1], "lon": coord[0]} for coord in osrm_data['geometry']]
+        
+        final_routes.append({
             "path": route_path,
             "depot": depot,
             "destinations": destinations,
             "distance_km": osrm_data['distance'] / 1000,
             "duration_hours": osrm_data['duration'] / 3600
-        }],
+        })
+        
+        total_distance_km += osrm_data['distance'] / 1000
+        total_duration_hours += osrm_data['duration'] / 3600
+    
+    # 4. Create the final results payload
+    final_results = {
+        "routes": final_routes,
         "metrics": {
-            "total_distance_km": osrm_data['distance'] / 1000,
-            "total_duration_hours": osrm_data['duration'] / 3600,
-            "co2_savings_kg": (osrm_data['distance'] / 1000) * 0.15 # Placeholder
+            "total_distance_km": total_distance_km,
+            "total_duration_hours": total_duration_hours,
+            "co2_savings_kg": total_distance_km * 0.15 # Placeholder
         },
         "optimization_time": time.time() - start_time
     }

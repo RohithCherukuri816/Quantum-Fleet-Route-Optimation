@@ -24,49 +24,70 @@ const ROUTE_COLORS = [
     '#67e8f9', // Cyan
 ];
 
-const MapComponent = ({ optimizationResults, isOptimizing }) => {
+const MapComponent = ({ optimizationResults, isOptimizing, openWeatherApiKey, selectedRouteIndex }) => {
     const [mapCenter, setMapCenter] = useState([16.5744, 80.6556]); // Default center
+    const [depotWeather, setDepotWeather] = useState(null);
     const mapRef = useRef();
 
-    // Fit map to all points whenever routes update
+    // Fetch weather data for the depot location
     useEffect(() => {
-        if (optimizationResults?.routes?.length > 0) {
-            const allPoints = optimizationResults.routes.flatMap(
-                route => route.path || []
-            );
+        const fetchDepotWeather = async () => {
+            if (optimizationResults?.routes?.length > 0 && openWeatherApiKey) {
+                const depot = optimizationResults.routes[0].depot;
+                if (!depot) return;
+                
+                const lat = depot.lat;
+                const lon = depot.lon;
+
+                try {
+                    const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${openWeatherApiKey}&units=metric`);
+                    const data = await res.json();
+                    setDepotWeather(data);
+                } catch (error) {
+                    console.error("Failed to fetch weather data:", error);
+                }
+            }
+        };
+
+        fetchDepotWeather();
+    }, [optimizationResults, openWeatherApiKey]);
+
+    // Fit map to all points whenever the selected route changes
+    useEffect(() => {
+        if (selectedRouteIndex !== null && optimizationResults?.routes?.[selectedRouteIndex]) {
+            const selectedRoute = optimizationResults.routes[selectedRouteIndex];
+            const allPoints = selectedRoute.path || [];
             if (allPoints.length > 0 && mapRef.current) {
                 const bounds = L.latLngBounds(allPoints.map(p => [p.lat, p.lon]));
                 mapRef.current.fitBounds(bounds, { padding: [50, 50] });
             }
         }
-    }, [optimizationResults]);
+    }, [selectedRouteIndex, optimizationResults]);
 
-    const renderRoutes = () => {
-        if (!optimizationResults?.routes) return null;
+    const renderSelectedRoute = () => {
+        if (selectedRouteIndex === null || !optimizationResults?.routes?.[selectedRouteIndex]) {
+            return null;
+        }
 
-        return optimizationResults.routes.map((route, index) => {
-            if (!route.path || route.path.length === 0) return null;
-
-            return (
-                <Polyline
-                    key={index}
-                    positions={route.path.map(p => [p.lat, p.lon])}
-                    color={ROUTE_COLORS[index % ROUTE_COLORS.length]}
-                    weight={5}
-                />
-            );
-        });
+        const route = optimizationResults.routes[selectedRouteIndex];
+        return (
+            <Polyline
+                key={selectedRouteIndex}
+                positions={route.path.map(p => [p.lat, p.lon])}
+                color={ROUTE_COLORS[selectedRouteIndex % ROUTE_COLORS.length]}
+                weight={5}
+            />
+        );
     };
 
-    const renderRouteMarkers = () => {
-        if (!optimizationResults?.routes || optimizationResults.routes.length === 0) {
+    const renderMarkersForSelectedRoute = () => {
+        if (selectedRouteIndex === null || !optimizationResults?.routes?.[selectedRouteIndex]) {
             return null;
         }
 
         const markers = [];
-        
-        const firstRoute = optimizationResults.routes[0];
-        const depot = firstRoute.depot;
+        const route = optimizationResults.routes[selectedRouteIndex];
+        const depot = route.depot;
 
         // Add a single depot marker
         if (depot) {
@@ -82,14 +103,25 @@ const MapComponent = ({ optimizationResults, isOptimizing }) => {
             });
             markers.push(
                 <Marker key="depot" position={[depot.lat, depot.lon]} icon={depotIcon}>
-                    <Popup>Depot</Popup>
+                    <Popup>
+                        <div className="text-sm font-semibold">Depot</div>
+                        {depotWeather ? (
+                            <div className="mt-1">
+                                <div className="font-bold text-base">{depotWeather.name}</div>
+                                <div>Temp: {depotWeather.main.temp}°C</div>
+                                <div>Weather: {depotWeather.weather[0].main}</div>
+                            </div>
+                        ) : (
+                            <div className="text-xs text-slate-400">Loading weather...</div>
+                        )}
+                    </Popup>
                 </Marker>
             );
         }
 
         // Add a marker for each distinct destination
-        if (firstRoute.destinations) {
-            firstRoute.destinations.forEach((dest, index) => {
+        if (route.destinations) {
+            route.destinations.forEach((dest, index) => {
                 const destIcon = new L.Icon({
                     iconUrl:
                         'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
@@ -103,7 +135,7 @@ const MapComponent = ({ optimizationResults, isOptimizing }) => {
 
                 markers.push(
                     <Marker
-                        key={`dest-${index}`}
+                        key={`dest-${selectedRouteIndex}-${index}`}
                         position={[dest.lat, dest.lon]}
                         icon={destIcon}
                     >
@@ -125,13 +157,20 @@ const MapComponent = ({ optimizationResults, isOptimizing }) => {
                 className="h-full w-full"
                 whenCreated={mapInstance => { mapRef.current = mapInstance; }}
             >
+                {/* Base OpenStreetMap Layer */}
                 <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
 
-                {renderRouteMarkers()}
-                {renderRoutes()}
+                {/* OpenWeatherMap Traffic Layer */}
+                <TileLayer
+                    url={`https://tile.openweathermap.org/map/traffic_light/{z}/{x}/{y}.png?appid=${openWeatherApiKey}`}
+                    attribution='Map data &copy; <a href="http://openweathermap.org">OpenWeatherMap</a>'
+                />
+
+                {renderMarkersForSelectedRoute()}
+                {renderSelectedRoute()}
             </MapContainer>
         </div>
     );
