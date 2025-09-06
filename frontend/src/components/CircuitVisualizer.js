@@ -181,25 +181,33 @@ const CircuitVisualizer = ({ method, results }) => {
   const renderOptimizationProcess = () => {
     if (!results) return null;
 
+    const optimizationTime = typeof results.optimization_time === 'number'
+      ? `${results.optimization_time.toFixed(2)}s`
+      : 'N/A';
+
+    const totalDistance = typeof results.total_distance === 'number'
+      ? `${results.total_distance.toFixed(1)} km`
+      : 'N/A';
+
     return (
       <div className="bg-slate-700 rounded-lg p-4">
         <h4 className="text-sm font-semibold text-slate-200 mb-3">Optimization Process</h4>
         <div className="space-y-3">
           <div className="flex items-center justify-between text-sm">
             <span className="text-slate-400">Method:</span>
-            <span className="text-slate-200">{method}</span>
+            <span className="text-slate-200">{method || 'N/A'}</span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-slate-400">Total Time:</span>
-            <span className="text-slate-200">{results.optimization_time.toFixed(2)}s</span>
+            <span className="text-slate-200">{optimizationTime}</span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-slate-400">Routes Found:</span>
-            <span className="text-slate-200">{results.routes.length}</span>
+            <span className="text-slate-200">{results.routes ? results.routes.length : 'N/A'}</span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-slate-400">Total Distance:</span>
-            <span className="text-slate-200">{results.total_distance.toFixed(1)} km</span>
+            <span className="text-slate-200">{totalDistance}</span>
           </div>
         </div>
       </div>

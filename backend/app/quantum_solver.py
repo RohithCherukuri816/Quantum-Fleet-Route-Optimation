@@ -21,12 +21,12 @@ class QuantumSolver:
         self.shots = 1024
         self.reps = 2
         
-    def create_vrp_qubo(self, distance_matrix: List[List[float]], vehicle_count: int) -> QuadraticProgram:
+    def create_vrp_qubo(self, cost_matrix: List[List[float]], vehicle_count: int) -> QuadraticProgram:
         """
-        Create a QUBO formulation for the VRP problem
+        Create a QUBO formulation for the VRP problem, optimizing for time (cost_matrix)
         
         Args:
-            distance_matrix: Matrix of distances between all locations
+            cost_matrix: Matrix of costs (travel times in minutes) between all locations
             vehicle_count: Number of vehicles available
             
         Returns:
@@ -34,7 +34,7 @@ class QuantumSolver:
         """
         logger.info("Creating VRP QUBO formulation...")
         
-        n_locations = len(distance_matrix)
+        n_locations = len(cost_matrix)
         n_vehicles = vehicle_count
         
         # Create binary variables: x[i,j,k] = 1 if vehicle k travels from i to j
@@ -48,14 +48,14 @@ class QuantumSolver:
                         var_name = f"x_{i}_{j}_{k}"
                         qp.binary_var(name=var_name)
         
-        # Objective: minimize total distance
+        # Objective: minimize total time
         objective = 0
         for i in range(n_locations):
             for j in range(n_locations):
                 if i != j:
                     for k in range(n_vehicles):
                         var_name = f"x_{i}_{j}_{k}"
-                        objective += distance_matrix[i][j] * qp.get_variable(var_name)
+                        objective += cost_matrix[i][j] * qp.get_variable(var_name)
         
         qp.minimize(objective)
         
@@ -214,16 +214,16 @@ class QuantumSolver:
         logger.info(f"Decoded routes: {routes}")
         return routes
     
-    async def solve_vrp_async(self, distance_matrix: List[List[float]], vehicle_count: int) -> Tuple[List[List[int]], float]:
+    async def solve_vrp_async(self, cost_matrix: List[List[float]], vehicle_count: int) -> Tuple[List[List[int]], float]:
         """
-        Asynchronously solve the VRP using QAOA
+        Asynchronously solve the VRP using QAOA, optimizing for time (cost_matrix)
         
         Args:
-            distance_matrix: Matrix of distances between all locations
+            cost_matrix: Matrix of costs (travel times in minutes) between all locations
             vehicle_count: Number of vehicles available
             
         Returns:
-            Tuple of (routes, total_distance)
+            Tuple of (routes, total_time)
         """
         logger.info("Starting async quantum VRP solution...")
         
@@ -232,34 +232,34 @@ class QuantumSolver:
         
         def solve_sync():
             # Create QUBO
-            qp = self.create_vrp_qubo(distance_matrix, vehicle_count)
+            qp = self.create_vrp_qubo(cost_matrix, vehicle_count)
             
             # Run QAOA
             bitstring, objective_value = self.run_qaoa(qp, self.reps, self.shots)
             
             # Decode solution
-            routes = self.decode_solution(bitstring, len(distance_matrix), vehicle_count)
+            routes = self.decode_solution(bitstring, len(cost_matrix), vehicle_count)
             
-            # Calculate total distance
-            total_distance = self.calculate_total_distance(routes, distance_matrix)
+            # Calculate total time
+            total_time = self.calculate_total_time(routes, cost_matrix)
             
-            return routes, total_distance
+            return routes, total_time
         
         # Execute in thread pool
         result = await loop.run_in_executor(None, solve_sync)
         return result
     
-    def calculate_total_distance(self, routes: List[List[int]], distance_matrix: List[List[float]]) -> float:
-        """Calculate total distance for the given routes"""
-        total_distance = 0.0
+    def calculate_total_time(self, routes: List[List[int]], cost_matrix: List[List[float]]) -> float:
+        """Calculate total time for the given routes"""
+        total_time = 0.0
         
         for route in routes:
             for i in range(len(route) - 1):
                 from_loc = route[i]
                 to_loc = route[i + 1]
-                total_distance += distance_matrix[from_loc][to_loc]
+                total_time += cost_matrix[from_loc][to_loc]
         
-        return total_distance
+        return total_time
     
     def get_circuit_info(self, qp: QuadraticProgram) -> dict:
         """Get information about the QAOA circuit for visualization"""

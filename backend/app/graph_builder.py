@@ -1,8 +1,9 @@
 import logging
 import math
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from geopy.distance import geodesic
 import numpy as np
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,89 @@ class GraphBuilder:
         
         logger.info("Distance matrix calculated successfully")
         return distance_matrix
+    
+    async def get_traffic_aware_cost_matrix(self, 
+                                          locations: List[Dict[str, Any]], 
+                                          async_directions_func: Any) -> Tuple[List[List[float]], Dict[str, Any]]:
+        """
+        Calculate a cost matrix (time in traffic) between all locations
+        using a provided asynchronous directions function.
+        
+        Args:
+            locations: List of location dictionaries with 'latitude' and 'longitude'
+            async_directions_func: An asynchronous function that takes 
+                                   (origin_lat, origin_lon, dest_lat, dest_lon) 
+                                   and returns traffic-aware directions data.
+            
+        Returns:
+            Tuple of (Cost matrix (travel time in minutes) as 2D list, 
+                      Dictionary of detailed route info for each segment)
+        """
+        logger.info(f"Calculating traffic-aware cost matrix for {len(locations)} locations...")
+        
+        n = len(locations)
+        cost_matrix = [[0.0 for _ in range(n)] for _ in range(n)]
+        detailed_route_info = {}
+        
+        tasks = []
+        task_keys = [] # To map results back to (i, j)
+        
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    origin_lat, origin_lon = locations[i]['latitude'], locations[i]['longitude']
+                    dest_lat, dest_lon = locations[j]['latitude'], locations[j]['longitude']
+                    tasks.append(async_directions_func(origin_lat, origin_lon, dest_lat, dest_lon))
+                    task_keys.append(f"{i}_{j}")
+                else:
+                    tasks.append(asyncio.sleep(0)) # Placeholder for same-point, effectively 0 cost
+                    task_keys.append(f"{i}_{j}") # Still add key for consistent indexing
+        
+        results = await asyncio.gather(*tasks)
+        
+        task_idx = 0
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    cost_matrix[i][j] = 0.0
+                    detailed_route_info[f"{i}_{j}"] = {"duration": 0, "distance": 0, "polyline": ""}
+                else:
+                    directions_data = results[task_idx]
+                    
+                    # Extract duration in traffic. Fallback to a default if not available.
+                    # Google Directions API returns duration_in_traffic in seconds
+                    duration_seconds = 0
+                    distance_meters = 0
+                    polyline = ""
+                    try:
+                        leg = directions_data['routes'][0]['legs'][0]
+                        duration_seconds = leg['duration_in_traffic']['value']
+                        distance_meters = leg['distance']['value']
+                        polyline = directions_data['routes'][0]['overview_polyline']['points']
+                        
+                        cost_matrix[i][j] = duration_seconds / 60.0 # Convert to minutes
+                        detailed_route_info[task_keys[task_idx]] = {
+                            "duration": duration_seconds / 60.0,
+                            "distance": distance_meters / 1000.0, # Convert to km
+                            "polyline": polyline
+                        }
+                    except (KeyError, IndexError, TypeError):
+                        logger.warning(f"Could not get traffic duration for route from {i} to {j}. Falling back to geodesic distance based estimation.")
+                        # Fallback to geodesic distance if traffic data is not available
+                        point1 = (locations[i]['latitude'], locations[i]['longitude'])
+                        point2 = (locations[j]['latitude'], locations[j]['longitude'])
+                        distance_km = geodesic(point1, point2).kilometers
+                        
+                        cost_matrix[i][j] = distance_km / 0.833 # Assuming average speed of 50 km/h (50/60 = 0.833 km/min)
+                        detailed_route_info[task_keys[task_idx]] = {
+                            "duration": cost_matrix[i][j],
+                            "distance": distance_km,
+                            "polyline": "" # No polyline for geodesic fallback
+                        }
+                    task_idx += 1
+        
+        logger.info("Traffic-aware cost matrix calculated successfully")
+        return cost_matrix, detailed_route_info
     
     def get_location_graph(self, location: str) -> Dict[str, Any]:
         """
