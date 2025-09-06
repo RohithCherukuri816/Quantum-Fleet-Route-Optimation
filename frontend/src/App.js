@@ -12,8 +12,8 @@ function App() {
     const [optimizationMethod, setOptimizationMethod] = useState(null);
     const [progress, setProgress] = useState(0);
     const [progressMessage, setProgressMessage] = useState('');
-    const [showMetrics, setShowMetrics] = useState(false); // Default to false
-    const [showCircuit, setShowCircuit] = useState(false); // Default to false
+    const [showMetrics, setShowMetrics] = useState(false);
+    const [showCircuit, setShowCircuit] = useState(false);
     const [websocket, setWebsocket] = useState(null);
 
     useEffect(() => {

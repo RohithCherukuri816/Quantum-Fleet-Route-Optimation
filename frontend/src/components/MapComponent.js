@@ -59,14 +59,16 @@ const MapComponent = ({ optimizationResults, isOptimizing }) => {
     };
 
     const renderRouteMarkers = () => {
-        if (!optimizationResults?.routes || optimizationResults.routes.length === 0)
+        if (!optimizationResults?.routes || optimizationResults.routes.length === 0) {
             return null;
+        }
 
         const markers = [];
-        const destinationMarkers = new Set();
+        
+        const firstRoute = optimizationResults.routes[0];
+        const depot = firstRoute.depot;
 
-        // Add depot marker for each route (assuming same depot)
-        const depot = optimizationResults.routes[0]?.path?.[0];
+        // Add a single depot marker
         if (depot) {
             const depotIcon = new L.Icon({
                 iconUrl:
@@ -85,45 +87,37 @@ const MapComponent = ({ optimizationResults, isOptimizing }) => {
             );
         }
 
-        // Add destination markers
-        optimizationResults.routes.forEach((route, routeIndex) => {
-            if (!route.path) return;
+        // Add a marker for each distinct destination
+        if (firstRoute.destinations) {
+            firstRoute.destinations.forEach((dest, index) => {
+                const destIcon = new L.Icon({
+                    iconUrl:
+                        'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+                    shadowUrl:
+                        'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+                    iconSize: [25, 41],
+                    iconAnchor: [12, 41],
+                    popupAnchor: [1, -34],
+                    shadowSize: [41, 41],
+                });
 
-            route.path.slice(1, -1).forEach(dest => {
-                if (!dest) return;
-
-                const key = `${dest.lat}-${dest.lon}`;
-                if (!destinationMarkers.has(key)) {
-                    const destIcon = new L.Icon({
-                        iconUrl:
-                            'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-                        shadowUrl:
-                            'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-                        iconSize: [25, 41],
-                        iconAnchor: [12, 41],
-                        popupAnchor: [1, -34],
-                        shadowSize: [41, 41],
-                    });
-
-                    markers.push(
-                        <Marker
-                            key={key}
-                            position={[dest.lat, dest.lon]}
-                            icon={destIcon}
-                        >
-                            <Popup>Destination: Vehicle {routeIndex + 1}</Popup>
-                        </Marker>
-                    );
-                    destinationMarkers.add(key);
-                }
+                markers.push(
+                    <Marker
+                        key={`dest-${index}`}
+                        position={[dest.lat, dest.lon]}
+                        icon={destIcon}
+                    >
+                        <Popup>{dest.address || `Destination ${index + 1}`}</Popup>
+                    </Marker>
+                );
             });
-        });
-
+        }
+        
         return markers;
     };
 
     return (
-        <div className="w-full h-screen relative">
+        <div className="w-full h-full relative">
             <MapContainer
                 center={mapCenter}
                 zoom={10}
