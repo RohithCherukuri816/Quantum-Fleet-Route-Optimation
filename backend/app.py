@@ -3,8 +3,11 @@ import math
 import random
 import time
 import requests
+import json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_sock import Sock
+from threading import Thread
 import mysql.connector
 from geopy.geocoders import Nominatim
 
@@ -19,10 +22,9 @@ load_dotenv()
 # --- Flask App ---
 app = Flask(__name__)
 CORS(app)
+sock = Sock(app)
 
 # --- MySQL Setup ---
-# Note: This is a placeholder for demonstration.
-# In a real app, you would configure database access securely.
 db = mysql.connector.connect(
     host="localhost",
     user="root",
@@ -33,6 +35,11 @@ cursor = db.cursor(dictionary=True)
 
 # --- Geocoder ---
 geolocator = Nominatim(user_agent="quantum_logistics_app")
+
+# --- Global State for Live Updates ---
+live_route_data = None
+active_sockets = set()
+optimization_running = False
 
 # --- Helper Functions ---
 def geocode_address(address_name):
@@ -50,7 +57,7 @@ def calculate_distance(p1, p2):
     return math.sqrt((p1['lat'] - p2['lat'])**2 + (p1['lon'] - p2['lon'])**2)
 
 def get_realtime_data(p1, p2):
-    """Simulates fetching real-time traffic, weather, etc., to influence route cost."""
+    """Simulates fetching real-time data to influence route cost."""
     # In a real application, you would call an external API here.
     # For this demo, we use a random multiplier to simulate.
     traffic_multiplier = 1 + (random.random() * 0.5)  # 1.0 to 1.5x slower
@@ -87,8 +94,6 @@ def get_osrm_route(points):
 
 # --- VRP Solvers (Simplified) ---
 def find_optimized_route_classical(depot, destinations, vehicle_count):
-    # This is a basic, greedy solver. In a real-world app, you would use
-    # a more robust library like OR-Tools.
     routes = [[] for _ in range(vehicle_count)]
     current_locations = [depot] * vehicle_count
     unassigned_destinations = list(destinations)
@@ -99,7 +104,6 @@ def find_optimized_route_classical(depot, destinations, vehicle_count):
         
         for i, vehicle_loc in enumerate(current_locations):
             for j, dest in enumerate(unassigned_destinations):
-                # Use real-time data to calculate cost, not just raw distance
                 cost = get_realtime_data(vehicle_loc, dest)
                 if cost < min_cost:
                     min_cost = cost
@@ -115,8 +119,6 @@ def find_optimized_route_classical(depot, destinations, vehicle_count):
     return routes
 
 def formulate_qubo_for_vrp(depot, destinations, vehicle_count):
-    # This is a placeholder for a real QUBO formulation.
-    # It demonstrates the theoretical flow.
     mdl = Model('VRP')
     num_nodes = 1 + len(destinations)
     all_points = [depot] + destinations
@@ -126,7 +128,6 @@ def formulate_qubo_for_vrp(depot, destinations, vehicle_count):
     for i in range(num_nodes):
         for j in range(num_nodes):
             if i != j:
-                # Use real-time data to influence the objective function
                 cost = get_realtime_data(all_points[i], all_points[j])
                 obj_expr += cost * x[i, j]
                 
@@ -135,13 +136,10 @@ def formulate_qubo_for_vrp(depot, destinations, vehicle_count):
     return qp
 
 def get_quantum_route(depot, destinations, vehicle_count):
-    # Placeholder for a quantum solution.
-    # In a real app, this would call a quantum backend.
     try:
         qp = formulate_qubo_for_vrp(depot, destinations, vehicle_count)
     except Exception as e:
         print(f"Failed to formulate QUBO: {e}")
-        # Fallback to classical on failure
         return find_optimized_route_classical(depot, destinations, vehicle_count)
         
     all_points = [depot] + destinations
@@ -160,92 +158,132 @@ def get_quantum_route(depot, destinations, vehicle_count):
         
     return routes
 
-# --- MySQL Live GPS Updates ---
-def update_vehicle_location(vehicle_id, lat, lon):
-    cursor.execute("""
-        INSERT INTO vehicle_locations (vehicle_id, latitude, longitude)
-        VALUES (%s, %s, %s)
-        ON DUPLICATE KEY UPDATE latitude=%s, longitude=%s, last_updated=NOW()
-    """, (vehicle_id, lat, lon, lat, lon))
-    db.commit()
+# --- Live Update Function ---
+def live_route_update_loop(payload):
+    global live_route_data
+    global optimization_running
+    
+    print("Starting live update loop...")
+    while optimization_running:
+        try:
+            solved_routes = find_optimized_route_classical(payload['depot_coords'], payload['destinations_coords'], payload['vehicleCount'])
+            
+            final_routes = []
+            for route_points in solved_routes:
+                if len(route_points) < 2:
+                    continue
+                osrm_data = get_osrm_route(route_points)
+                if osrm_data:
+                    route_path = [{"lat": coord[1], "lon": coord[0]} for coord in osrm_data['geometry']]
+                    final_routes.append({
+                        "path": route_path,
+                        "depot": payload['depot_coords'],
+                        "destinations": payload['destinations_coords'],
+                        "distance_km": osrm_data['distance'] / 1000,
+                        "duration_hours": osrm_data['duration'] / 3600
+                    })
+            
+            if final_routes:
+                live_route_data = {
+                    "routes": final_routes,
+                    "metrics": {
+                        "total_distance_km": sum(r['distance_km'] for r in final_routes),
+                        "total_duration_hours": sum(r['duration_hours'] for r in final_routes),
+                        "co2_savings_kg": sum(r['distance_km'] for r in final_routes) * 0.15
+                    },
+                    "optimization_time": time.time() - payload['start_time']
+                }
+
+            # Push update to all connected clients
+            for ws in active_sockets:
+                try:
+                    ws.send(json.dumps({"type": "live_route_update", "results": live_route_data}))
+                except:
+                    # Handle disconnected sockets
+                    active_sockets.remove(ws)
+            
+            time.sleep(10)
+
+        except Exception as e:
+            print(f"Live update loop error: {e}")
+            break
 
 # --- Flask Routes ---
 @app.route("/optimize-route", methods=["POST"])
 def optimize_route():
+    global live_route_data
+    global optimization_running
+    
     data = request.json
     depot_name = data.get('depot')
     destination_names = data.get('destinations', [])
     vehicle_count = int(data.get('vehicleCount', 1))
     method = data.get('method', 'classical')
-    
+
     start_time = time.time()
     
-    # 1. Geocode all addresses
-    depot = geocode_address(depot_name)
-    if not depot:
+    depot_coords = geocode_address(depot_name)
+    if not depot_coords:
         return jsonify({"ok": False, "error": f"Could not geocode depot: {depot_name}"}), 400
     
-    destinations = []
+    destinations_coords = []
     for name in destination_names:
         coords = geocode_address(name)
         if not coords:
             return jsonify({"ok": False, "error": f"Could not geocode destination: {name}"}), 400
-        destinations.append(coords)
+        destinations_coords.append(coords)
     
-    # 2. Solve VRP to get a list of points for each vehicle
+    solved_routes = []
     if method == 'classical':
-        solved_routes = find_optimized_route_classical(depot, destinations, vehicle_count)
+        solved_routes = find_optimized_route_classical(depot_coords, destinations_coords, vehicle_count)
     elif method == 'quantum':
-        solved_routes = get_quantum_route(depot, destinations, vehicle_count)
-    else:
-        return jsonify({"ok": False, "error": "Invalid optimization method"}), 400
+        solved_routes = get_quantum_route(depot_coords, destinations_coords, vehicle_count)
 
-    # 3. Get the route path from OSRM for each solved route
     final_routes = []
     total_distance_km = 0
     total_duration_hours = 0
-    
+
     for route_points in solved_routes:
         if len(route_points) < 2:
             continue
-            
+        
         osrm_data = get_osrm_route(route_points)
         if not osrm_data:
             continue
-            
+
         route_path = [{"lat": coord[1], "lon": coord[0]} for coord in osrm_data['geometry']]
         
         final_routes.append({
             "path": route_path,
-            "depot": depot,
-            "destinations": destinations,
+            "depot": depot_coords,
+            "destinations": route_points[1:-1],  # Exclude depot start/end
             "distance_km": osrm_data['distance'] / 1000,
             "duration_hours": osrm_data['duration'] / 3600
         })
-        
+
         total_distance_km += osrm_data['distance'] / 1000
         total_duration_hours += osrm_data['duration'] / 3600
-    
-    # 4. Create the final results payload
+
     final_results = {
         "routes": final_routes,
         "metrics": {
             "total_distance_km": total_distance_km,
             "total_duration_hours": total_duration_hours,
-            "co2_savings_kg": total_distance_km * 0.15 # Placeholder
+            "co2_savings_kg": total_distance_km * 0.15
         },
         "optimization_time": time.time() - start_time
     }
     
+    # Send initial results and start live updates
+    live_route_data = final_results
+    for ws in active_sockets:
+        try:
+            ws.send(json.dumps({"type": "live_route_update", "results": final_results}))
+        except:
+            pass
+
     return jsonify({"ok": True, "results": final_results})
 
-@app.route("/vehicle-location/<int:vehicle_id>")
-def get_vehicle_location(vehicle_id):
-    cursor.execute("SELECT * FROM vehicle_locations WHERE vehicle_id=%s", (vehicle_id,))
-    row = cursor.fetchone()
-    if row:
-        return jsonify(row)
-    return jsonify({"error": "Vehicle not found"}), 404
 
 @app.route("/api/demo-data")
 def get_demo_data():
@@ -260,6 +298,30 @@ def get_demo_data():
         ]
     }
     return jsonify(data)
+
+@app.route("/stop-optimization", methods=["POST"])
+def stop_optimization():
+    global optimization_running
+    optimization_running = False
+    return jsonify({"ok": True, "message": "Optimization stopped."})
+
+
+# --- WebSocket Endpoint ---
+@sock.route('/ws/telemetry')
+def telemetry(ws):
+    active_sockets.add(ws)
+    print("New WebSocket client connected.")
+    try:
+        while True:
+            data = ws.receive()
+            if data:
+                print(f"Received message from client: {data}")
+    except Exception as e:
+        print(f"WebSocket client disconnected: {e}")
+    finally:
+        if ws in active_sockets:
+            active_sockets.remove(ws)
+
 
 if __name__ == "__main__":
     app.run(debug=True, port=8000)

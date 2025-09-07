@@ -4,20 +4,24 @@
   "description": "FleetFlow - Quantum Route Optimization Frontend",
   "private": true,
   "dependencies": {
+    "@react-google-maps/api": "^2.20.7",
     "@testing-library/jest-dom": "^5.16.4",
     "@testing-library/react": "^13.3.0",
     "@testing-library/user-event": "^13.5.0",
+    "autoprefixer": "^10.4.16",
+    "axios": "^1.6.0",
+    "framer-motion": "^12.23.12",
+    "leaflet": "^1.9.4",
+    "leaflet.gridlayer.googlemutant": "^0.15.0",
+    "lucide-react": "^0.294.0",
+    "polyline": "^0.2.0",
+    "postcss": "^8.4.31",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
-    "leaflet": "^1.9.4",
     "react-leaflet": "^4.2.1",
+    "react-scripts": "5.0.1",
     "recharts": "^2.8.0",
-    "axios": "^1.6.0",
-    "lucide-react": "^0.294.0",
-    "tailwindcss": "^3.3.0",
-    "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.31"
+    "tailwindcss": "^3.3.0"
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.8"
