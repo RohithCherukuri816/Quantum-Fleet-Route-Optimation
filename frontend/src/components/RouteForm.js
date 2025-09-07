@@ -1,4 +1,3 @@
-// RouteForm.js
 import React, { useState, useEffect } from "react";
 import { PlusCircle, Trash2 } from 'lucide-react';
 
@@ -19,7 +18,6 @@ const RouteForm = ({ onOptimize, onMapLayerChange }) => {
   const [selectedMapLayer, setSelectedMapLayer] = useState("OpenStreetMap");
 
   useEffect(() => {
-    // This will immediately update the map when the dropdown changes
     onMapLayerChange(selectedMapLayer);
   }, [selectedMapLayer, onMapLayerChange]);
 

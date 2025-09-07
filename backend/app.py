@@ -1,4 +1,3 @@
-# app.py
 import os
 import math
 import random
@@ -39,6 +38,7 @@ cursor = db.cursor(dictionary=True)
 
 # --- Geocoder ---
 geolocator = Nominatim(user_agent="quantum_logistics_app")
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 # --- Global State for Live Updates ---
 live_route_data = None
@@ -47,6 +47,88 @@ optimization_running = False
 vehicle_simulation_thread = None
 
 # --- Helper Functions ---
+def get_weather_data(lat, lon):
+    """Fetches current weather and forecast data from OpenWeatherMap."""
+    if not OPENWEATHER_API_KEY:
+        print("OpenWeather API key not found.")
+        return None
+    
+    try:
+        current_res = requests.get(
+            f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units=metric",
+            timeout=5
+        )
+        current_res.raise_for_status()
+        current_data = current_res.json()
+        
+        forecast_res = requests.get(
+            f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}&units=metric",
+            timeout=5
+        )
+        forecast_res.raise_for_status()
+        forecast_data = forecast_res.json()
+        
+        return {
+            "current": current_data,
+            "forecast": forecast_data
+        }
+    except requests.exceptions.RequestException as e:
+        print(f"OpenWeather API error: {e}")
+        return None
+
+def analyze_route_impact(weather_data_list):
+    """Analyzes weather data to provide a simulated route impact report."""
+    if not weather_data_list:
+        return None
+    
+    impacts = set()
+    expected_delay = 0
+    
+    for weather_data in weather_data_list:
+        if not weather_data or not weather_data.get('current'):
+            continue
+        
+        current = weather_data['current']
+        main = current.get('main', {})
+        wind = current.get('wind', {})
+        
+        # Analyze visibility
+        if current.get('visibility', 10000) < 5000:
+            impacts.add("Low visibility expected")
+            expected_delay += 5
+        
+        # Analyze wind
+        if wind.get('speed', 0) > 20: # 20 km/h
+            impacts.add("Strong winds may affect travel")
+            expected_delay += 5
+            
+        # Analyze rain/snow
+        if any(desc in ['rain', 'snow', 'thunderstorm'] for desc in [w['main'].lower() for w in current.get('weather', [])]):
+            impacts.add("Adverse weather conditions")
+            expected_delay += 10
+            
+    return {
+        "impacts": list(impacts),
+        "expected_delay_min": expected_delay
+    }
+
+def get_route_weather(depot_coords, destinations_coords):
+    """Fetches weather for the depot and all destinations along the route."""
+    weather_data_list = []
+    
+    # Get weather for depot
+    depot_weather = get_weather_data(depot_coords['lat'], depot_coords['lon'])
+    if depot_weather:
+        weather_data_list.append(depot_weather)
+    
+    # Get weather for destinations
+    for dest in destinations_coords:
+        dest_weather = get_weather_data(dest['lat'], dest['lon'])
+        if dest_weather:
+            weather_data_list.append(dest_weather)
+    
+    return weather_data_list
+
 def geocode_address(address_name):
     """Geocodes a street address to latitude and longitude coordinates."""
     try:
@@ -65,6 +147,26 @@ def get_realtime_data(p1, p2):
     """Simulates fetching real-time data to influence route cost."""
     traffic_multiplier = 1 + (random.random() * 0.5)
     return calculate_distance(p1, p2) * traffic_multiplier
+
+def get_free_flow_route(points):
+    """
+    Calls the OSRM API to get a route's duration with no traffic.
+    This is a simplified simulation using a fixed speed.
+    """
+    if not points or len(points) < 2:
+        return None
+    
+    total_distance_km = 0
+    for i in range(len(points) - 1):
+        total_distance_km += calculate_distance(points[i], points[i+1]) * 111.32 # Approx km per degree
+    
+    # Assume an average free-flow speed of 60 km/h
+    duration_seconds = (total_distance_km / 60) * 3600
+    
+    return {
+        "duration": duration_seconds,
+    }
+
 
 def get_osrm_route(points):
     """
@@ -93,6 +195,27 @@ def get_osrm_route(points):
         print(f"OSRM API error: {e}")
     return None
 
+def analyze_traffic_impact(realtime_duration, free_flow_duration):
+    """Analyzes and generates a traffic impact report."""
+    if not realtime_duration or not free_flow_duration or free_flow_duration == 0:
+        return None
+    
+    delay_min = round((realtime_duration - free_flow_duration) / 60)
+    delay_percent = round((delay_min / (free_flow_duration / 60)) * 100) if free_flow_duration > 0 else 0
+    
+    if delay_min <= 0:
+        status = "No traffic delay"
+    elif delay_min > 0 and delay_min <= 10:
+        status = "Light traffic congestion"
+    else:
+        status = "Heavy traffic congestion"
+        
+    return {
+        "status": status,
+        "delay_min": delay_min,
+        "delay_percent": delay_percent
+    }
+
 # --- VRP Solvers (Corrected) ---
 def find_optimized_route_classical(depot, destinations, vehicle_count):
     routes = [[] for _ in range(vehicle_count)]
@@ -119,14 +242,9 @@ def solve_qubo_classically(qubo, vehicle_count):
     This provides a reliable 'quantum-inspired' result without simulator errors.
     """
     try:
-        # Instantiate a classical minimum eigensolver
         meo_classical = MinimumEigenOptimizer(NumPyMinimumEigensolver())
         result = meo_classical.solve(qubo)
-        
-        # CORRECTED: Get the solution by mapping variable names to their values
         solution_dict = dict(zip(result.variable_names, result.x))
-        
-        # Decode the solution into actual routes
         routes = [[] for _ in range(vehicle_count)]
         for var_name, value in solution_dict.items():
             if value == 1.0:
@@ -134,7 +252,6 @@ def solve_qubo_classically(qubo, vehicle_count):
                 vehicle_index = int(parts[1])
                 destination_index = int(parts[2])
                 routes[vehicle_index].append(destination_index)
-        
         return routes
     except Exception as e:
         print(f"Classical QUBO solver failed: {e}")
@@ -146,7 +263,6 @@ def get_quantum_route(depot, destinations, vehicle_count):
     """
     num_destinations = len(destinations)
     
-    # Simple QUBO formulation for assignment problem
     qp = QuadraticProgram()
     for i in range(vehicle_count):
         for j in range(num_destinations):
@@ -159,25 +275,20 @@ def get_quantum_route(depot, destinations, vehicle_count):
             linear[f'x_{i}_{j}'] = cost
     qp.minimize(linear=linear)
     
-    # Constraint: each destination is assigned to exactly one vehicle
     for j in range(num_destinations):
         constraint_linear = {}
         for i in range(vehicle_count):
             constraint_linear[f'x_{i}_{j}'] = 1
         qp.linear_constraint(linear=constraint_linear, sense='==', rhs=1, name=f'dest_assign_{j}')
     
-    # Convert the constrained QP to a QUBO with a large penalty
     converter = QuadraticProgramToQubo(penalty=100000)
     qubo = converter.convert(qp)
-
-    # Solve the QUBO using the stable classical method
     solution_indices = solve_qubo_classically(qubo, vehicle_count)
 
     if not solution_indices:
         print("Quantum solution failed. Falling back to classical.")
         return find_optimized_route_classical(depot, destinations, vehicle_count)
         
-    # Decode the solution into actual routes
     routes = [[] for _ in range(vehicle_count)]
     for i, dest_indices in enumerate(solution_indices):
         for dest_idx in dest_indices:
@@ -251,6 +362,9 @@ def optimize_route():
     final_routes = []
     total_distance_km = 0
     total_duration_hours = 0
+    
+    route_weather_data = get_route_weather(depot_coords, destinations_coords)
+    route_impact = analyze_route_impact(route_weather_data)
 
     for route_points in solved_routes_destinations:
         if not route_points:
@@ -258,9 +372,13 @@ def optimize_route():
         
         full_route_for_osrm = [depot_coords] + route_points + [depot_coords]
         osrm_data = get_osrm_route(full_route_for_osrm)
+        free_flow_data = get_free_flow_route(full_route_for_osrm)
+        
         if not osrm_data:
             continue
 
+        traffic_impact = analyze_traffic_impact(osrm_data['duration'], free_flow_data['duration'])
+        
         route_path = [{"lat": coord[1], "lon": coord[0]} for coord in osrm_data['geometry']]
         
         final_routes.append({
@@ -268,7 +386,8 @@ def optimize_route():
             "depot": depot_coords,
             "destinations": route_points, 
             "distance_km": osrm_data['distance'] / 1000,
-            "duration_hours": osrm_data['duration'] / 3600
+            "duration_hours": osrm_data['duration'] / 3600,
+            "traffic_impact": traffic_impact
         })
 
         total_distance_km += osrm_data['distance'] / 1000
@@ -281,7 +400,11 @@ def optimize_route():
             "total_duration_hours": total_duration_hours,
             "co2_savings_kg": total_distance_km * 0.15
         },
-        "optimization_time": time.time() - start_time
+        "optimization_time": time.time() - start_time,
+        "weather": {
+            "report": route_weather_data[0] if route_weather_data else None,
+            "impacts": route_impact
+        }
     }
     
     live_route_data = final_results

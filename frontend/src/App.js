@@ -1,10 +1,11 @@
-// App.js
 import React, { useState, useEffect } from 'react';
 import MapComponent from './components/MapComponent';
 import Sidebar from './components/Sidebar';
 import MetricsPanel from './components/MetricsPanel';
 import CircuitVisualizer from './components/CircuitVisualizer';
-import { BarChart3, Zap } from 'lucide-react';
+import WeatherPanel from './components/WeatherPanel';
+import TrafficPanel from './components/TrafficPanel';
+import { BarChart3, Zap, Cloud, TrafficCone } from 'lucide-react';
 import Loader from './Loader';
 
 function App() {
@@ -17,12 +18,10 @@ function App() {
     const [showCircuit, setShowCircuit] = useState(false);
     const [selectedRouteIndex, setSelectedRouteIndex] = useState(null);
     const [mapLayer, setMapLayer] = useState("OpenStreetMap");
-    // New state for live vehicle position
     const [liveVehiclePosition, setLiveVehiclePosition] = useState(null);
 
     const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
     const OPENWEATHER_API_KEY = process.env.REACT_APP_OPENWEATHER_API_KEY;
-    console.log("Google Maps API Key:", GOOGLE_MAPS_API_KEY);
 
     // WebSocket for live telemetry & route updates
     useEffect(() => {
@@ -56,7 +55,6 @@ function App() {
                     }
                 }
 
-                // New handler for live vehicle position
                 if (data.type === 'live_vehicle_position') {
                     setLiveVehiclePosition(data.position);
                     setProgress(data.progress);
@@ -99,8 +97,34 @@ function App() {
         }
     };
 
-    const toggleMetrics = () => setShowMetrics(prev => !prev);
-    const toggleCircuit = () => setShowCircuit(prev => !prev);
+    const toggleMetrics = () => {
+        setShowMetrics(prev => !prev);
+        setShowCircuit(false);
+        setShowWeather(false);
+        setShowTraffic(false);
+    }
+    const toggleCircuit = () => {
+        setShowCircuit(prev => !prev);
+        setShowMetrics(false);
+        setShowWeather(false);
+        setShowTraffic(false);
+    }
+    
+    const [showWeather, setShowWeather] = useState(false);
+    const toggleWeather = () => {
+        setShowWeather(prev => !prev);
+        setShowMetrics(false);
+        setShowCircuit(false);
+        setShowTraffic(false);
+    }
+
+    const [showTraffic, setShowTraffic] = useState(false);
+    const toggleTraffic = () => {
+        setShowTraffic(prev => !prev);
+        setShowMetrics(false);
+        setShowCircuit(false);
+        setShowWeather(false);
+    }
 
     return (
         <div className="flex h-screen bg-slate-900 text-slate-300">
@@ -143,6 +167,20 @@ function App() {
                         >
                             <Zap size={20} />
                         </button>
+                         <button
+                            onClick={toggleWeather}
+                            className={`p-2 rounded-lg transition-colors ${showWeather ? 'bg-indigo-600' : 'bg-slate-700 hover:bg-slate-600'}`}
+                            title="Toggle Weather Report"
+                        >
+                            <Cloud size={20} />
+                        </button>
+                        <button
+                            onClick={toggleTraffic}
+                            className={`p-2 rounded-lg transition-colors ${showTraffic ? 'bg-yellow-600' : 'bg-slate-700 hover:bg-slate-600'}`}
+                            title="Toggle Traffic Insights"
+                        >
+                            <TrafficCone size={20} />
+                        </button>
                     </div>
                 </div>
 
@@ -176,6 +214,18 @@ function App() {
                         method={optimizationMethod}
                         results={optimizationResults}
                     />
+                </div>
+            )}
+            
+            {showWeather && (
+                <div className="w-96 bg-slate-800 border-l border-slate-700 overflow-y-auto">
+                    <WeatherPanel weatherData={optimizationResults?.weather} />
+                </div>
+            )}
+
+            {showTraffic && (
+                <div className="w-96 bg-slate-800 border-l border-slate-700 overflow-y-auto">
+                    <TrafficPanel trafficData={optimizationResults?.routes[selectedRouteIndex]?.traffic_impact} />
                 </div>
             )}
         </div>

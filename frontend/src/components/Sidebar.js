@@ -1,4 +1,3 @@
-// Sidebar.js
 import React, { useState, useEffect, useRef } from 'react';
 import { Truck, Zap, Cpu, Loader, Play } from 'lucide-react';
 import axios from 'axios';
@@ -106,7 +105,7 @@ const Sidebar = ({
                 <button
                     onClick={handleStartSimulation}
                     className="w-full flex items-center justify-center space-x-2 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-md transition-colors"
-                    disabled={isOptimizing || !latestResultsRef.current} // Disable if optimizing or no route exists
+                    disabled={isOptimizing || !latestResultsRef.current}
                 >
                     <Play size={20} />
                     <span>Start Live Route</span>
