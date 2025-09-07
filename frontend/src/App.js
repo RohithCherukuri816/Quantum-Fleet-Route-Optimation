@@ -16,8 +16,9 @@ function App() {
     const [showMetrics, setShowMetrics] = useState(false);
     const [showCircuit, setShowCircuit] = useState(false);
     const [selectedRouteIndex, setSelectedRouteIndex] = useState(null);
-    // New state for map layer
     const [mapLayer, setMapLayer] = useState("OpenStreetMap");
+    // New state for live vehicle position
+    const [liveVehiclePosition, setLiveVehiclePosition] = useState(null);
 
     const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
     const OPENWEATHER_API_KEY = process.env.REACT_APP_OPENWEATHER_API_KEY;
@@ -46,6 +47,7 @@ function App() {
                     setOptimizationResults(results);
                     setProgressMessage("Live route updated based on real-time conditions.");
                     setIsOptimizing(false);
+                    setLiveVehiclePosition(null);
 
                     if (results?.routes?.length > 0) {
                         setSelectedRouteIndex(0);
@@ -53,6 +55,13 @@ function App() {
                         setSelectedRouteIndex(null);
                     }
                 }
+
+                // New handler for live vehicle position
+                if (data.type === 'live_vehicle_position') {
+                    setLiveVehiclePosition(data.position);
+                    setProgress(data.progress);
+                }
+
             } catch (error) {
                 console.log('WebSocket message:', event.data);
             }
@@ -62,17 +71,16 @@ function App() {
 
         return () => ws.close();
     }, []);
-    
-    // New handler to update the map layer
+
     const handleMapLayerChange = (layer) => {
         setMapLayer(layer);
     };
 
-    const handleOptimizationStart = (payload, message) => {
+    const handleOptimizationStart = (method, message) => {
         setIsOptimizing(true);
         setProgress(0);
         setProgressMessage(message || 'Starting optimization...');
-        setOptimizationMethod(payload.method);
+        setOptimizationMethod(method);
         setOptimizationResults(null);
         setSelectedRouteIndex(null);
     };
@@ -145,6 +153,7 @@ function App() {
                         googleMapsApiKey={GOOGLE_MAPS_API_KEY}
                         openWeatherApiKey={OPENWEATHER_API_KEY}
                         mapLayer={mapLayer}
+                        liveVehiclePosition={liveVehiclePosition}
                     />
                 </div>
             </div>
