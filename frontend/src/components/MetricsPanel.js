@@ -1,3 +1,4 @@
+// MetricsPanel.js
 import React from 'react';
 import {
     BarChart,
@@ -60,7 +61,19 @@ const MetricsPanel = ({ results, method, onRouteSelect, selectedRouteIndex }) =>
         };
     };
 
-    const overallMetrics = getOverallMetrics();
+    const getDisplayMetrics = () => {
+        if (selectedRouteIndex !== null && results.routes[selectedRouteIndex]) {
+            const route = results.routes[selectedRouteIndex];
+            return {
+                total_distance_km: route.distance_km ?? 0,
+                total_duration_hours: route.duration_hours ?? 0,
+                co2_savings_kg: (route.distance_km ?? 0) * 0.15,
+            };
+        }
+        return getOverallMetrics();
+    };
+
+    const displayMetrics = getDisplayMetrics();
 
     const getRouteDetails = () => {
         return results.routes.map((route, index) => ({
@@ -92,21 +105,21 @@ const MetricsPanel = ({ results, method, onRouteSelect, selectedRouteIndex }) =>
                     <MapPin className="text-blue-400 mb-2" size={24} />
                     <span className="text-slate-400 text-sm">Total Distance</span>
                     <span className="text-slate-200 text-lg font-semibold mt-1">
-                        {overallMetrics.total_distance_km.toFixed(2)} km
+                        {displayMetrics.total_distance_km.toFixed(2)} km
                     </span>
                 </div>
                 <div className="bg-slate-700 p-4 rounded-lg flex flex-col items-start">
                     <Clock className="text-green-400 mb-2" size={24} />
                     <span className="text-slate-400 text-sm">Total Duration</span>
                     <span className="text-slate-200 text-lg font-semibold mt-1">
-                        {overallMetrics.total_duration_hours.toFixed(2)} hours
+                        {displayMetrics.total_duration_hours.toFixed(2)} hours
                     </span>
                 </div>
                 <div className="bg-slate-700 p-4 rounded-lg flex flex-col items-start">
                     <TrendingUp className="text-purple-400 mb-2" size={24} />
                     <span className="text-slate-400 text-sm">CO2 Saved</span>
                     <span className="text-slate-200 text-lg font-semibold mt-1">
-                        {overallMetrics.co2_savings_kg.toFixed(2)} kg
+                        {displayMetrics.co2_savings_kg.toFixed(2)} kg
                     </span>
                 </div>
                 <div className="bg-slate-700 p-4 rounded-lg flex flex-col items-start">
