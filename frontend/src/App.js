@@ -1,3 +1,4 @@
+// App.js
 import React, { useState, useEffect } from 'react';
 import MapComponent from './components/MapComponent';
 import Sidebar from './components/Sidebar';
@@ -15,6 +16,8 @@ function App() {
     const [showMetrics, setShowMetrics] = useState(false);
     const [showCircuit, setShowCircuit] = useState(false);
     const [selectedRouteIndex, setSelectedRouteIndex] = useState(null);
+    // New state for map layer
+    const [mapLayer, setMapLayer] = useState("OpenStreetMap");
 
     const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
     const OPENWEATHER_API_KEY = process.env.REACT_APP_OPENWEATHER_API_KEY;
@@ -59,12 +62,17 @@ function App() {
 
         return () => ws.close();
     }, []);
+    
+    // New handler to update the map layer
+    const handleMapLayerChange = (layer) => {
+        setMapLayer(layer);
+    };
 
-    const handleOptimizationStart = (method, message) => {
+    const handleOptimizationStart = (payload, message) => {
         setIsOptimizing(true);
         setProgress(0);
         setProgressMessage(message || 'Starting optimization...');
-        setOptimizationMethod(method);
+        setOptimizationMethod(payload.method);
         setOptimizationResults(null);
         setSelectedRouteIndex(null);
     };
@@ -95,6 +103,7 @@ function App() {
                 isOptimizing={isOptimizing}
                 progress={progress}
                 progressMessage={progressMessage}
+                onMapLayerChange={handleMapLayerChange}
             />
 
             {/* Main content: Map and top bar */}
@@ -135,6 +144,7 @@ function App() {
                         selectedRouteIndex={selectedRouteIndex ?? 0}
                         googleMapsApiKey={GOOGLE_MAPS_API_KEY}
                         openWeatherApiKey={OPENWEATHER_API_KEY}
+                        mapLayer={mapLayer}
                     />
                 </div>
             </div>
