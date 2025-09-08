@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import math
 import random
@@ -218,21 +219,15 @@ def analyze_traffic_impact(realtime_duration, free_flow_duration):
 
 # --- VRP Solvers (Corrected) ---
 def find_optimized_route_classical(depot, destinations, vehicle_count):
+    """
+    A simple classical solver that assigns one destination to each vehicle
+    in the order they were provided.
+    """
     routes = [[] for _ in range(vehicle_count)]
-    dest_assignments = [[] for _ in range(vehicle_count)]
-    unassigned_destinations = list(destinations)
-
-    current_vehicle_index = 0
-    while unassigned_destinations:
-        dest_to_assign = unassigned_destinations.pop(0)
-        dest_assignments[current_vehicle_index].append(dest_to_assign)
-        current_vehicle_index = (current_vehicle_index + 1) % vehicle_count
-
-    for i in range(vehicle_count):
-        assigned_dests = dest_assignments[i]
-        if not assigned_dests:
-            continue
-        routes[i] = assigned_dests
+    
+    # Assign one destination per vehicle up to the total number of destinations
+    for i in range(min(len(destinations), vehicle_count)):
+        routes[i].append(destinations[i])
         
     return routes
 
@@ -260,39 +255,56 @@ def solve_qubo_classically(qubo, vehicle_count):
 def get_quantum_route(depot, destinations, vehicle_count):
     """
     Formulates the problem and solves it with a local QAOA-inspired classical solver.
+    This version now also ensures a 1-to-1 assignment.
     """
+    # NOTE: A proper quantum solution to VRP is highly complex.
+    # This is a simplified placeholder that mimics a quantum
+    # assignment of destinations. For this problem, a simple
+    # 1-to-1 assignment is a practical approach.
+    
     num_destinations = len(destinations)
     
+    # Ensure there are enough destinations for the number of vehicles
+    effective_vehicle_count = min(vehicle_count, num_destinations)
+    
     qp = QuadraticProgram()
-    for i in range(vehicle_count):
+    # x_ij = 1 if destination j is assigned to vehicle i
+    for i in range(effective_vehicle_count):
         for j in range(num_destinations):
             qp.binary_var(name=f'x_{i}_{j}')
     
+    # Cost function: minimize total travel distance (simplified)
     linear = {}
-    for i in range(vehicle_count):
+    for i in range(effective_vehicle_count):
         for j in range(num_destinations):
-            cost = get_realtime_data(depot, destinations[j])
+            cost = calculate_distance(depot, destinations[j])
             linear[f'x_{i}_{j}'] = cost
     qp.minimize(linear=linear)
     
+    # Constraint 1: Each destination is assigned to exactly one vehicle
     for j in range(num_destinations):
         constraint_linear = {}
-        for i in range(vehicle_count):
+        for i in range(effective_vehicle_count):
             constraint_linear[f'x_{i}_{j}'] = 1
         qp.linear_constraint(linear=constraint_linear, sense='==', rhs=1, name=f'dest_assign_{j}')
     
+    # Constraint 2: Each vehicle is assigned at most one destination
+    for i in range(effective_vehicle_count):
+        constraint_linear = {}
+        for j in range(num_destinations):
+            constraint_linear[f'x_{i}_{j}'] = 1
+        qp.linear_constraint(linear=constraint_linear, sense='<=', rhs=1, name=f'vehicle_cap_{i}')
+    
     converter = QuadraticProgramToQubo(penalty=100000)
     qubo = converter.convert(qp)
-    solution_indices = solve_qubo_classically(qubo, vehicle_count)
-
-    if not solution_indices:
-        print("Quantum solution failed. Falling back to classical.")
-        return find_optimized_route_classical(depot, destinations, vehicle_count)
-        
+    solution_indices = solve_qubo_classically(qubo, effective_vehicle_count)
+    
     routes = [[] for _ in range(vehicle_count)]
-    for i, dest_indices in enumerate(solution_indices):
-        for dest_idx in dest_indices:
-            routes[i].append(destinations[dest_idx])
+    if solution_indices:
+        for i, dest_indices in enumerate(solution_indices):
+            if i < vehicle_count:
+                for dest_idx in dest_indices:
+                    routes[i].append(destinations[dest_idx])
             
     return routes
 
@@ -366,20 +378,37 @@ def optimize_route():
     route_weather_data = get_route_weather(depot_coords, destinations_coords)
     route_impact = analyze_route_impact(route_weather_data)
 
-    for route_points in solved_routes_destinations:
+    # Correct logic to ensure all vehicles are in the response
+    for i in range(vehicle_count):
+        route_points = solved_routes_destinations[i] if i < len(solved_routes_destinations) else []
+        
         if not route_points:
-            continue
-        
-        full_route_for_osrm = [depot_coords] + route_points + [depot_coords]
-        osrm_data = get_osrm_route(full_route_for_osrm)
-        free_flow_data = get_free_flow_route(full_route_for_osrm)
-        
-        if not osrm_data:
+            # If no points are assigned, create an empty route for this vehicle
+            final_routes.append({
+                "path": [{"lat": depot_coords['lat'], "lon": depot_coords['lon']}],
+                "depot": depot_coords,
+                "destinations": [], 
+                "distance_km": 0,
+                "duration_hours": 0,
+                "traffic_impact": {"status": "No traffic data", "delay_min": 0, "delay_percent": 0}
+            })
             continue
 
+        # If points are assigned, calculate the route from depot to the point and back
+        full_route_for_osrm = [depot_coords, route_points[0], depot_coords]
+        osrm_data = get_osrm_route(full_route_for_osrm)
+        
+        if not osrm_data:
+            # Fallback for OSRM failure
+            osrm_data = {
+                "distance": (calculate_distance(depot_coords, route_points[0]) + calculate_distance(route_points[0], depot_coords)) * 111.32,
+                "duration": ((calculate_distance(depot_coords, route_points[0]) + calculate_distance(route_points[0], depot_coords)) * 111.32 / 50) * 3600
+            }
+        
+        free_flow_data = get_free_flow_route(full_route_for_osrm)
         traffic_impact = analyze_traffic_impact(osrm_data['duration'], free_flow_data['duration'])
         
-        route_path = [{"lat": coord[1], "lon": coord[0]} for coord in osrm_data['geometry']]
+        route_path = [{"lat": coord[1], "lon": coord[0]} for coord in osrm_data.get('geometry', [])]
         
         final_routes.append({
             "path": route_path,
@@ -392,6 +421,7 @@ def optimize_route():
 
         total_distance_km += osrm_data['distance'] / 1000
         total_duration_hours += osrm_data['duration'] / 3600
+        
 
     final_results = {
         "routes": final_routes,
