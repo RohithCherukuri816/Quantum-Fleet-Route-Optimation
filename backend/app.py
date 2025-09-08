@@ -217,19 +217,79 @@ def analyze_traffic_impact(realtime_duration, free_flow_duration):
         "delay_percent": delay_percent
     }
 
-# --- VRP Solvers (Corrected) ---
-def find_optimized_route_classical(depot, destinations, vehicle_count):
+def get_cost_with_preferences(p1, p2, preferences, vehicle_profile):
     """
-    A simple classical solver that assigns one destination to each vehicle
-    in the order they were provided.
+    Calculates a weighted cost between two points based on user preferences.
     """
-    routes = [[] for _ in range(vehicle_count)]
+    # Simulate base duration and distance using Euclidean distance
+    base_distance = calculate_distance(p1, p2)
+    base_duration = base_distance * 3600 / 50 # Assume a base speed of 50 km/h
+
+    # Apply preference multipliers
+    cost = base_distance
     
-    # Assign one destination per vehicle up to the total number of destinations
-    for i in range(min(len(destinations), vehicle_count)):
-        routes[i].append(destinations[i])
+    # 1. Optimize for Time vs. Distance
+    if preferences.get('optimizeFor') == 'time':
+        # Prioritize time over distance. For simplicity, use duration as the primary cost.
+        cost = base_duration
         
+    # 2. Optimize for Fuel
+    if preferences.get('optimizeForFuel'):
+        # This is a simplified model. Fuel consumption increases with distance and elevation changes.
+        elevation_change_cost = abs(p1.get('elevation', 0) - p2.get('elevation', 0)) * 0.1 # Placeholder
+        cost += base_distance * 0.2 + elevation_change_cost
+
+    # 3. Include Elevation
+    if preferences.get('includeElevation'):
+        # Adds a penalty for elevation changes. Placeholder logic.
+        elevation_cost = abs(p1.get('elevation', 0) - p2.get('elevation', 0)) * 0.5
+        cost += elevation_cost
+
+    # 4. Handle Avoidances (Simulated)
+    if preferences.get('avoidTolls'):
+        cost += 50 # Add a high fixed penalty for tolls
+    if preferences.get('avoidFerries'):
+        cost += 100 # Add a very high fixed penalty for ferries
+
+    # Apply a small random factor for real-time traffic simulation
+    traffic_multiplier = 1 + (random.random() * 0.2)
+    cost *= traffic_multiplier
+
+    return cost
+
+# --- VRP Solvers (Corrected) ---
+def find_optimized_route_classical(depot, destinations, vehicle_count, preferences):
+    routes = [[] for _ in range(vehicle_count)]
+    if not destinations:
+        return routes
+
+    unassigned_destinations = list(destinations)
+    
+    # Greedily assign destinations to vehicles based on cost
+    while unassigned_destinations and any(len(routes[i]) < 1 for i in range(vehicle_count)):
+        min_cost = float('inf')
+        best_vehicle_index = -1
+        dest_to_assign = None
+        
+        for dest in unassigned_destinations:
+            for i in range(vehicle_count):
+                if len(routes[i]) == 0:  # Only assign to a vehicle that hasn't received a destination yet
+                    last_point = depot
+                    cost = get_cost_with_preferences(last_point, dest, preferences, preferences.get('vehicleProfile'))
+                    
+                    if cost < min_cost:
+                        min_cost = cost
+                        best_vehicle_index = i
+                        dest_to_assign = dest
+                        
+        if dest_to_assign:
+            routes[best_vehicle_index].append(dest_to_assign)
+            unassigned_destinations.remove(dest_to_assign)
+        else:
+            break
+            
     return routes
+
 
 def solve_qubo_classically(qubo, vehicle_count):
     """
@@ -252,7 +312,7 @@ def solve_qubo_classically(qubo, vehicle_count):
         print(f"Classical QUBO solver failed: {e}")
         return None
 
-def get_quantum_route(depot, destinations, vehicle_count):
+def get_quantum_route(depot, destinations, vehicle_count, preferences):
     """
     Formulates the problem and solves it with a local QAOA-inspired classical solver.
     This version now also ensures a 1-to-1 assignment.
@@ -277,7 +337,7 @@ def get_quantum_route(depot, destinations, vehicle_count):
     linear = {}
     for i in range(effective_vehicle_count):
         for j in range(num_destinations):
-            cost = calculate_distance(depot, destinations[j])
+            cost = get_cost_with_preferences(depot, destinations[j], preferences, preferences.get('vehicleProfile'))
             linear[f'x_{i}_{j}'] = cost
     qp.minimize(linear=linear)
     
@@ -351,6 +411,7 @@ def optimize_route():
     destination_names = data.get('destinations', [])
     vehicle_count = int(data.get('vehicleCount', 1))
     method = data.get('method', 'classical')
+    preferences = data.get('preferences', {})
 
     start_time = time.time()
     
@@ -367,9 +428,9 @@ def optimize_route():
     
     solved_routes_destinations = []
     if method == 'classical':
-        solved_routes_destinations = find_optimized_route_classical(depot_coords, destinations_coords, vehicle_count)
+        solved_routes_destinations = find_optimized_route_classical(depot_coords, destinations_coords, vehicle_count, preferences)
     elif method == 'quantum':
-        solved_routes_destinations = get_quantum_route(depot_coords, destinations_coords, vehicle_count)
+        solved_routes_destinations = get_quantum_route(depot_coords, destinations_coords, vehicle_count, preferences)
     
     final_routes = []
     total_distance_km = 0
